@@ -643,31 +643,7 @@ NE_LAND.filter(r=>r.o===1).forEach(ring=>{
   }
   ctx.closePath(); ctx.stroke();
 }); ctx.restore();
-// Ground stations — painted as small diamonds on the Earth texture
-GROUND_STATIONS.forEach(gs => {
-  const [cx, cy] = ll(gs.lon, gs.lat);
-  const r = 4;
-  ctx.save();
-  // Outer glow
-  const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 2.5);
-  grd.addColorStop(0,   'rgba(255,255,255,0.9)');
-  grd.addColorStop(0.4, 'rgba(255,255,255,0.4)');
-  grd.addColorStop(1,   'rgba(255,255,255,0.0)');
-  ctx.fillStyle = grd;
-  ctx.beginPath(); ctx.arc(cx, cy, r * 2.5, 0, Math.PI * 2); ctx.fill();
-  // Diamond
-  ctx.fillStyle   = 'rgba(255,255,255,1.0)';
-  ctx.strokeStyle = 'rgba(180,220,255,0.8)';
-  ctx.lineWidth   = 1;
-  ctx.beginPath();
-  ctx.moveTo(cx,     cy - r);
-  ctx.lineTo(cx + r, cy    );
-  ctx.lineTo(cx,     cy + r);
-  ctx.lineTo(cx - r, cy    );
-  ctx.closePath();
-  ctx.fill(); ctx.stroke();
-  ctx.restore();
-});
+// (GS drawn below in consolidated loop)
 
 // Ground stations — baked into Earth texture as white diamond markers
 (function(){
@@ -683,16 +659,12 @@ GROUND_STATIONS.forEach(gs => {
     grd.addColorStop(1,    'rgba(255,255,255,0.0)');
     ctx.fillStyle = grd;
     ctx.beginPath(); ctx.arc(cx, cy, r * 3, 0, Math.PI * 2); ctx.fill();
-    // White diamond
+    // White dot (circle — no sharp edges)
     ctx.fillStyle   = 'rgba(255,255,255,1.0)';
     ctx.strokeStyle = 'rgba(160,210,255,0.9)';
-    ctx.lineWidth   = 1.5;
+    ctx.lineWidth   = 1.0;
     ctx.beginPath();
-    ctx.moveTo(cx,     cy - r);
-    ctx.lineTo(cx + r, cy    );
-    ctx.lineTo(cx,     cy + r);
-    ctx.lineTo(cx - r, cy    );
-    ctx.closePath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
   });
@@ -716,7 +688,7 @@ const atmMat = new THREE.MeshPhongMaterial({color:0x0044aa,transparent:true,opac
 scene.add(new THREE.Mesh(new THREE.SphereGeometry(EARTH_R*1.018,48,48), atmMat));
 
 // ── Satellites ────────────────────────────────────────────────────────────────
-let shellGroups=[], shellVisible=SHELLS.map(()=>true), orbitLines=[], coverageSpheres=[];
+let shellGroups=[], shellVisible=SHELLS.map(()=>true), orbitLines=[];
 let simSpeed=8, satSize=1, showOrbits=true, showCoverage=false, autoRotate=false;
 
 function orbitalPos(R,inc,RAAN,anomaly){
@@ -732,17 +704,26 @@ function buildShell(shell,renderCount){
   const incRad=shell.inc*Math.PI/180;
   const satsPerPlane=Math.max(4,Math.floor(renderCount/shell.planes));
   const planes=Math.min(shell.planes,Math.ceil(renderCount/satsPerPlane));
-  const satGeo=new THREE.SphereGeometry(0.022,6,6);
+  const satGeo=new THREE.SphereGeometry(0.022,12,10);
   const satMat=new THREE.MeshBasicMaterial({color:shell.color});
-  const haloGeo=new THREE.SphereGeometry(0.048,6,6);
+  const haloGeo=new THREE.SphereGeometry(0.048,12,10);
   const haloMat=new THREE.MeshBasicMaterial({color:shell.color,transparent:true,opacity:0.18});
   const sats=[], trailMeshes=[], orbitGeos=[];
+  // Cap orbit ring display: max 8 rings per shell to avoid visual clutter
+  // Evenly sample from all rendered planes
+  const maxRings = Math.min(planes, 8);
+  const ringStep = Math.max(1, Math.floor(planes / maxRings));
+  const ringOpacity = shell.inc > 80 ? 0.30 : 0.18; // SSO/polar shells more visible
   for(let p=0;p<planes;p++){
     const RAAN=(p/planes)*Math.PI*2;
-    const ringPts=[];
-    for(let a=0;a<=80;a++){ const angle=(a/80)*Math.PI*2; ringPts.push(new THREE.Vector3(...orbitalPos(R,incRad,RAAN,angle))); }
-    const ring=new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPts),new THREE.LineBasicMaterial({color:shell.color,transparent:true,opacity:0.15}));
-    group.add(ring); orbitGeos.push(ring);
+    // Only draw ring for sampled planes, but still iterate all planes for satellite placement
+    if(p % ringStep === 0){
+      const ringPts=[];
+      for(let a=0;a<=120;a++){ const angle=(a/120)*Math.PI*2; ringPts.push(new THREE.Vector3(...orbitalPos(R,incRad,RAAN,angle))); }
+      const ring=new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPts),new THREE.LineBasicMaterial({color:shell.color,transparent:true,opacity:ringOpacity}));
+      group.add(ring); orbitGeos.push(ring);
+    }
+    if(p % ringStep !== 0) continue; // only place sats in planes that have rings
     for(let s=0;s<satsPerPlane;s++){
       const phase0=(s/satsPerPlane)*Math.PI*2+(p/planes)*Math.PI*0.4;
       const sat=new THREE.Mesh(satGeo.clone(),satMat.clone());
@@ -764,9 +745,7 @@ function buildShell(shell,renderCount){
 SHELLS.forEach((shell,i)=>{
   const built=buildShell(shell,RENDER_LIMIT[i]);
   shellGroups.push(built); scene.add(built.group); orbitLines.push(built.orbitGeos);
-  const covR=(EARTH_RADIUS+shell.alt)*SCALE;
-  const covMesh=new THREE.Mesh(new THREE.SphereGeometry(covR,48,24),new THREE.MeshBasicMaterial({color:shell.color,transparent:true,opacity:0.18,side:THREE.DoubleSide,wireframe:true}));
-  covMesh.visible=false; scene.add(covMesh); coverageSpheres.push(covMesh);
+  // coverageSpheres removed — coverage now handled by canvas overlay (covEarthMesh)
 });
 
 // ── Coverage canvas ────────────────────────────────────────────────────────────
@@ -1172,40 +1151,8 @@ function switchTab(tab) {
   }
 
   const barrosTbody = document.getElementById('barros-tbody');
-  if (barrosTbody && !barrosTbody.dataset.filled) {
-    barrosTbody.dataset.filled = '1';
-    const scenarios = [
-      { name:'Barros original (all-V2, 5 Mbps)',    raw:67.7, tz:2.65, sp:0.175, demand:5,         barros:true,  highlight:false },
-      { name:'Barros-comparable (actual sats)',      raw:42.6, tz:2.65, sp:0.175, demand:5,         barros:true,  highlight:false },
-      { name:'Cloonan Low  (T-Mob 580GB, TZ=1.5)',  raw:42.6, tz:1.5,  sp:null,  demand:TAVG_MBPS, barros:false, highlight:false },
-      { name:'Cloonan Base (T-Mob 580GB, TZ=2.0) ★',raw:42.6, tz:2.0,  sp:null,  demand:TAVG_MBPS, barros:false, highlight:true  },
-      { name:'Cloonan High (T-Mob 580GB, TZ=2.5)',  raw:42.6, tz:2.5,  sp:null,  demand:TAVG_MBPS, barros:false, highlight:false },
-    ];
-    scenarios.forEach(s => {
-      let globalM;
-      if (s.barros) {
-        // Barros method: raw × TZ × spatial (spatial bundles everything)
-        const eff = s.raw * s.tz * s.sp;
-        globalM = eff * 1e6 / s.demand / 1e6;
-      } else {
-        // Cloonan method: iterative with K×Tmax headroom
-        const eff = s.raw * UL * s.tz * NR * SP;
-        globalM = cloonanHomes(eff, s.demand, K_CLOONAN, TMAX_MBPS, NSUBperGROUP);
-      }
-      const usM = globalM * 0.27;
-      const hl  = s.highlight ? 'style="background:rgba(0,212,255,0.05)"' : '';
-      const demLabel = s.barros ? s.demand.toFixed(1) + ' Mbps' : s.demand.toFixed(2) + ' Mbps (T-Mob 12%BH)';
-      barrosTbody.innerHTML += `<tr ${hl}>
-        <td style="${s.highlight ? 'color:#fff;font-weight:700' : ''}">${s.name}</td>
-        <td class="amber">${s.tz}×</td>
-        <td>${demLabel}</td>
-        <td class="val">${globalM.toFixed(2)}M</td>
-        <td class="${s.highlight ? 'val' : 'amber'}">${usM.toFixed(2)}M</td>
-      </tr>`;
-    });
-  }
 
-  }
+}
 }
 
 // ── ANALYTICS DATA ─────────────────────────────────────────────────────────────
@@ -1213,14 +1160,12 @@ const SHELL_GBPS = [5.0, 5.0, 4.5, 5.0, 10.0, 10.0, 7.0]; // Gbps per satellite
 
 function populateAnalytics() {
   // ── Cloonan/T-Mobile FWA constants ─────────────────────────────────────────
-  // Step 1: Tavg = 580 GB/mo (T-Mobile FWA Q3 2025) × 1024 ÷ 30 ÷ 3600 × 8 × 12%
-  const TAVG_MBPS    = 5.28;   // T-Mobile FWA Q3 2025 · 580 GB/mo · 12% BH · ÷3600 × 8
-  const K_CLOONAN    = 1.1;    // QoE constant · Cloonan/ARRIS SCTE 2014
-  const TMAX_MBPS    = 220;    // Starlink residential advertised speed (Mbps)
-  const NSUBperGROUP = 300;    // typical service group (rural satellite beam)
+  const TAVG_MBPS    = 5.28;
+  const K_CLOONAN    = 1.1;
+  const TMAX_MBPS    = 220;
+  const NSUBperGROUP = 300;
   const UL=0.40, NR=0.80, SP=0.55;
 
-  // Cloonan iterative solver
   function cloonanHomes(effTbps, tavg, K, tmax, nsub_group) {
     let h = effTbps * 1e6 / tavg;
     for (let i = 0; i < 10; i++) {
@@ -1230,11 +1175,10 @@ function populateAnalytics() {
     return h / 1e6;
   }
 
-  // Capacity bars per shell
+  // ── Capacity bars ────────────────────────────────────────────────────────────
   const capBars = document.getElementById('capacity-bars');
   if (capBars && !capBars.dataset.filled) {
     capBars.dataset.filled = '1';
-    // Spectrum data per shell
     const SHELL_SPECTRUM = [
       { dl:'Ku 10.7–12.7 GHz', ul:'Ku 14.0–14.5 GHz', gw:'Ka 26.5–27.0 GHz', isl:'None',         dlBw:'2,000 MHz', ulBw:'500 MHz' },
       { dl:'Ku 10.7–12.7 GHz', ul:'Ku 14.0–14.5 GHz', gw:'Ka 26.5–27.0 GHz', isl:'None',         dlBw:'2,000 MHz', ulBw:'500 MHz' },
@@ -1244,52 +1188,33 @@ function populateAnalytics() {
       { dl:'Ku 10.7–12.75 GHz + Ka 17.8–18.6 GHz', ul:'Ku 14.0–14.5 GHz + Ka 27.5–29.1 GHz', gw:'Ka 37.5–42.5 GHz', isl:'Optical 1550nm', dlBw:'2,850 MHz', ulBw:'1,600 MHz' },
       { dl:'PCS Band 25 · 1900 MHz (D2C)', ul:'PCS Band 25 · 1900 MHz (D2C)', gw:'Ka 37.5–42.5 GHz', isl:'Optical 1550nm', dlBw:'~60 MHz', ulBw:'~60 MHz' },
     ];
-
     const colors = ['green','green','green','green','pink','pink','cyan'];
-    let totalTbps = 0;
-    let totalSats = 0;
-
+    let totalTbps = 0, totalSats = 0;
     SHELLS.forEach((shell, i) => {
-      const rendered  = RENDER_LIMIT[i];
-      const tbps      = (rendered * SHELL_GBPS[i] / 1000).toFixed(1);
-      const maxTbps   = 4.0;
-      const sp        = SHELL_SPECTRUM[i];
-      // Shell 7 (D2C) excluded from broadband capacity totals
-      if (i !== 6) { totalTbps += rendered * SHELL_GBPS[i] / 1000; totalSats += rendered; }
-      const pct       = Math.min(100, (tbps / maxTbps) * 100);
-      const dimmed    = shellVisible[i] ? '' : 'style="opacity:0.3"';
-      const islColor  = sp.isl === 'None' ? '#3a5a7a' : sp.isl === 'Partial' ? '#aa7700' : '#00ff88';
-      const hex       = '#' + shell.color.toString(16).padStart(6,'0');
-
+      const rendered = RENDER_LIMIT[i];
+      const tbps     = (rendered * SHELL_GBPS[i] / 1000).toFixed(1);
+      const sp       = SHELL_SPECTRUM[i];
+      const isD2C    = (i === 6);
+      if (!isD2C) { totalTbps += rendered * SHELL_GBPS[i] / 1000; totalSats += rendered; }
+      const pct      = Math.min(100, (parseFloat(tbps) / 4.0) * 100);
+      const dimmed   = shellVisible[i] ? '' : 'style="opacity:0.3"';
+      const islColor = sp.isl === 'None' ? '#3a5a7a' : sp.isl === 'Partial' ? '#aa7700' : '#00ff88';
+      const hex      = '#' + shell.color.toString(16).padStart(6,'0');
       capBars.innerHTML += `
         <div class="cap-block" ${dimmed}>
           <div class="an-bar-row" style="margin-bottom:4px">
             <div class="an-bar-label" style="color:${hex};font-weight:700">
               ${shell.name} · ${shell.gen}
-              ${i === 6 ? '<span style="font-size:7px;color:#3a5a7a;margin-left:6px;letter-spacing:1px;border:1px solid #3a5a7a;padding:1px 4px;border-radius:2px">D2C · EXCL. BROADBAND</span>' : ''}
+              ${isD2C ? '<span style="font-size:7px;color:#3a5a7a;margin-left:6px;border:1px solid #3a5a7a;padding:1px 4px;border-radius:2px">D2C · EXCL.</span>' : ''}
             </div>
-            <div class="an-bar-track" style="${i === 6 ? 'opacity:0.35' : ''}"><div class="an-bar-fill ${colors[i]}" style="width:${pct}%"></div></div>
-            <div class="an-bar-val" style="${i === 6 ? 'color:#3a5a7a' : ''}">${i === 6 ? '—' : tbps + ' Tbps'}</div>
+            <div class="an-bar-track" style="${isD2C ? 'opacity:0.35' : ''}"><div class="an-bar-fill ${colors[i]}" style="width:${pct}%"></div></div>
+            <div class="an-bar-val" style="${isD2C ? 'color:#3a5a7a' : ''}">${isD2C ? '—' : tbps + ' Tbps'}</div>
           </div>
           <div class="cap-spectrum-row">
-            <div class="cap-spec-item">
-              <span class="cap-spec-key">DL</span>
-              <span class="cap-spec-val">${sp.dl}</span>
-              <span class="cap-spec-bw">${sp.dlBw}</span>
-            </div>
-            <div class="cap-spec-item">
-              <span class="cap-spec-key">UL</span>
-              <span class="cap-spec-val">${sp.ul}</span>
-              <span class="cap-spec-bw">${sp.ulBw}</span>
-            </div>
-            <div class="cap-spec-item">
-              <span class="cap-spec-key">GW</span>
-              <span class="cap-spec-val">${sp.gw}</span>
-            </div>
-            <div class="cap-spec-item">
-              <span class="cap-spec-key">ISL</span>
-              <span class="cap-spec-val" style="color:${islColor}">${sp.isl}</span>
-            </div>
+            <div class="cap-spec-item"><span class="cap-spec-key">DL</span><span class="cap-spec-val">${sp.dl}</span><span class="cap-spec-bw">${sp.dlBw}</span></div>
+            <div class="cap-spec-item"><span class="cap-spec-key">UL</span><span class="cap-spec-val">${sp.ul}</span><span class="cap-spec-bw">${sp.ulBw}</span></div>
+            <div class="cap-spec-item"><span class="cap-spec-key">GW</span><span class="cap-spec-val">${sp.gw}</span></div>
+            <div class="cap-spec-item"><span class="cap-spec-key">ISL</span><span class="cap-spec-val" style="color:${islColor}">${sp.isl}</span></div>
           </div>
           <div class="cap-divider"></div>
         </div>`;
@@ -1298,7 +1223,7 @@ function populateAnalytics() {
     document.getElementById('ac-gbps-per-sat').textContent = (totalTbps * 1000 / totalSats).toFixed(1);
   }
 
-  // Shell table
+  // ── Shell table ──────────────────────────────────────────────────────────────
   const tbody = document.getElementById('shell-table-body');
   if (tbody && !tbody.dataset.filled) {
     tbody.dataset.filled = '1';
@@ -1308,84 +1233,72 @@ function populateAnalytics() {
       const gpsSat = isD2C ? '~60 MHz PCS' : SHELL_GBPS[i] + ' Gbps';
       const rowDim = isD2C ? 'style="opacity:0.45"' : (shellVisible[i] ? '' : 'style="opacity:0.4"');
       const d2cTag = isD2C ? ' <span style="font-size:7px;color:#3a5a7a;border:1px solid #3a5a7a;padding:1px 3px;border-radius:2px">D2C</span>' : '';
+      const dlBand = ['Ku 2GHz','Ku 2GHz','Ku 2GHz','Ku 2GHz','Ku+Ka 2.85GHz','Ku+Ka 2.85GHz','PCS ~60MHz'][i];
       tbody.innerHTML += `<tr ${rowDim}>
         <td><span style="color:#${shell.color.toString(16).padStart(6,'0')};font-weight:700">${shell.name}</span>${d2cTag}</td>
-        <td>${shell.alt} km</td>
-        <td>${shell.inc}°</td>
+        <td>${shell.alt} km</td><td>${shell.inc}°</td>
         <td class="val">${shell.count.toLocaleString()}</td>
+        <td>${dlBand}</td>
         <td class="${isD2C ? '' : 'val'}">${gpsSat}</td>
         <td class="${isD2C ? '' : 'val'}">${tbps}</td>
-        <td class="${(i >= 4 && !isD2C) ? 'val' : 'amber'}">${SHELL_LATENCY[i]} ms</td>
       </tr>`;
     });
   }
 
-  // US broadband market bars
-  const bbBars = document.getElementById('us-broadband-bars');
-  if (bbBars && !bbBars.dataset.filled) {
-    bbBars.dataset.filled = '1';
-    const providers = [
-      { name:'Comcast Xfinity',  homes:'64.6M', pct:95, color:'cyan'  },
-      { name:'Charter Spectrum',  homes:'54.0M', pct:79, color:'green' },
-      { name:'AT&T Broadband',    homes:'28.7M', pct:42, color:'green' },
-      { name:'Verizon Fios/Home', homes:'7.4M',  pct:11, color:'green' },
-      { name:'Cox Communications',homes:'6.5M',  pct:10, color:'green' },
-      { name:'Lumen/CenturyLink', homes:'4.8M',  pct:7,  color:'amber' },
-      { name:'Starlink (US est.)',homes:'1.2M',  pct:2,  color:'pink'  },
+  // ── V3 capacity table ────────────────────────────────────────────────────────
+  const v3tbody = document.getElementById('v3-tbody');
+  if (v3tbody && !v3tbody.dataset.filled) {
+    v3tbody.dataset.filled = '1';
+    // V3: 1,000 Gbps/sat DL, launches H1 2026 via Starship (60 sats/launch)
+    const V3_GBPS = 1000;
+    const V3_TMAX = 1000; // Mbps plan speed (gigabit)
+    const v3_scenarios = [
+      { sats:  60, label:'1 Starship launch',    tz:2.0 },
+      { sats: 300, label:'5 launches',           tz:2.0 },
+      { sats: 600, label:'10 launches',          tz:2.0 },
+      { sats:1200, label:'20 launches (1 year)', tz:2.0 },
+      { sats:3000, label:'Full V3 buildout est.',tz:2.5 },
     ];
-    providers.forEach(p => {
-      bbBars.innerHTML += `
-        <div class="an-bar-row">
-          <div class="an-bar-label">${p.name}</div>
-          <div class="an-bar-track"><div class="an-bar-fill ${p.color}" style="width:${p.pct}%"></div></div>
-          <div class="an-bar-val">${p.homes}</div>
-        </div>`;
+    // V3 table: two Tmax assumptions explained inline
+    // Tmax=220 Mbps: same plan tier as V2 — V3 capacity serves MORE homes at same speed
+    // Tmax=1000 Mbps: gigabit plan — K×Tmax headroom = 1,100 Mbps/beam (4.5× V2 headroom)
+    //   so much of V3's 10× raw capacity gain is consumed by QoE headroom for gigabit SLA
+    v3_scenarios.forEach(s => {
+      const rawTbps  = s.sats * V3_GBPS / 1000;
+      const effTbps  = rawTbps * UL * s.tz * NR * SP;
+      // Scenario A: same 220 Mbps plan (capacity gain goes to more homes)
+      const globalA  = cloonanHomes(effTbps, TAVG_MBPS, K_CLOONAN, 220, NSUBperGROUP);
+      // Scenario B: gigabit 1000 Mbps plan (K×Tmax headroom 4.5× larger)
+      const globalB  = cloonanHomes(effTbps, TAVG_MBPS, K_CLOONAN, V3_TMAX, NSUBperGROUP);
+      const usA = globalA * 0.27;
+      const usB = globalB * 0.27;
+      const phase = s.sats <= 300 ? 'Early' : s.sats <= 1200 ? 'Growth' : 'Buildout';
+      v3tbody.innerHTML += `<tr>
+        <td>${s.sats.toLocaleString()} V3 · ${s.label}</td>
+        <td class="val">${rawTbps.toFixed(0)} Tbps</td>
+        <td class="val">${effTbps.toFixed(1)} Tbps</td>
+        <td class="val">${globalA.toFixed(1)}M / ${usA.toFixed(1)}M</td>
+        <td class="amber">${globalB.toFixed(1)}M / ${usB.toFixed(1)}M</td>
+        <td style="color:#4a6a8a;font-size:8px">${phase}</td>
+      </tr>`;
     });
   }
 
-  // TAM bars
-  const tamBars = document.getElementById('tam-bars');
-  if (tamBars && !tamBars.dataset.filled) {
-    tamBars.dataset.filled = '1';
-    const segments = [
-      { name:'Rural unserved (no ISP)',  val:'14.5M', pct:100, color:'green' },
-      { name:'Rural underserved (<25Mbps)',val:'6.8M', pct:47,  color:'amber' },
-      { name:'Urban backup/mobility',    val:'3.2M',  pct:22,  color:'cyan'  },
-      { name:'Maritime/Aviation',        val:'0.8M',  pct:6,   color:'pink'  },
-    ];
-    segments.forEach(s => {
-      tamBars.innerHTML += `
-        <div class="an-bar-row">
-          <div class="an-bar-label">${s.name}</div>
-          <div class="an-bar-track"><div class="an-bar-fill ${s.color}" style="width:${s.pct}%"></div></div>
-          <div class="an-bar-val">${s.val}</div>
-        </div>`;
-    });
-  // Barros capacity model waterfall + table
+  // ── Capacity waterfall ───────────────────────────────────────────────────────
   const barrosWaterfall = document.getElementById('barros-waterfall');
   if (barrosWaterfall && !barrosWaterfall.dataset.filled) {
     barrosWaterfall.dataset.filled = '1';
     const steps = [
-      { label:'Raw satellite capacity (Shells 1–6)', val:'42.6 Tbps', pct:100, note:'Gen1: 5 Gbps/sat · Gen2: 10 Gbps/sat · Actual shell counts (excl. D2C Shell 7)', color:'cyan' },
+      { label:'Raw satellite capacity (Shells 1–6)', val:'42.6 Tbps', pct:100, note:'Gen1: 5 Gbps/sat · Gen2 V2 Mini: 10 Gbps/sat · Actual shell counts (excl. D2C Shell 7)', color:'cyan' },
       { label:'× User-link DL fraction (40%)',       val:'17.0 Tbps', pct:40,  note:'~60% reserved for feeder/gateway links, uplink, protocol overhead', color:'green' },
-      { label:'× Time-zone reuse (2.0×)',            val:'34.1 Tbps', pct:80,  note:'Each Gbps of capacity serves multiple time zones as satellites orbit; base scenario 2.0×', color:'green' },
-      { label:'× Non-residential discount (80%)',    val:'27.3 Tbps', pct:64,  note:'~20% reserved for commercial, backhaul, maritime, aviation segments', color:'amber' },
+      { label:'× Time-zone reuse (2.0×)',            val:'34.1 Tbps', pct:80,  note:'Each Gbps serves multiple time zones as satellites orbit; base scenario 2.0×', color:'green' },
+      { label:'× Non-residential discount (80%)',    val:'27.3 Tbps', pct:64,  note:'~20% reserved for commercial, backhaul, maritime, aviation', color:'amber' },
       { label:'× Spatial efficiency (55%)',          val:'15.0 Tbps', pct:35,  note:'Population distribution vs satellite beam geometry mismatch; rural coverage skew', color:'amber' },
-      { label:'Nsub × Tavg  (DC component)',         val:'5.28 Mbps/sub', pct:18, note:'Cloonan Term 1: aggregate mean load. Tavg = 580 GB/mo (T-Mobile FWA Q3 2025) × 1024 ÷ 30 ÷ 3600 × 8 × 12% = 5.28 Mbps', color:'amber' },
-      { label:'+ K × Tmax_max  (AC headroom)',       val:'1.1 × 220 = 242 Mbps/beam', pct:6, note:'Cloonan Term 2: burst headroom above DC mean. K=1.1 validated by ARRIS simulations (2014). Tmax=220 Mbps (Starlink plan).', color:'pink' },
+      { label:'Nsub × Tavg  [DC component]',        val:'5.28 Mbps/sub', pct:18, note:'Cloonan Term 1: aggregate mean load during busy hour across all subscribed homes', color:'amber' },
+      { label:'+ K × Tmax_max  [AC headroom]',      val:'1.1 × 220 = 242 Mbps/beam', pct:6, note:'Cloonan Term 2: burst headroom above DC mean. K=1.1 per ARRIS simulations.', color:'pink' },
     ];
-    // Cloonan iterative solution: homes = (eff - num_groups × K × Tmax) / Tavg
-    // where num_groups = homes / NSUBperGROUP (iterative)
-    let effTbps = 42.6 * 0.40 * 2.0 * 0.80 * 0.55; // 15.0 Tbps
-    let homes_iter = effTbps * 1e6 / TAVG_MBPS;
-    for (let i = 0; i < 10; i++) {
-      const groups = homes_iter / NSUBperGROUP;
-      const headroom = groups * K_CLOONAN * TMAX_MBPS;
-      homes_iter = (effTbps * 1e6 - headroom) / TAVG_MBPS;
-    }
-    const resultM = homes_iter / 1e6;
     steps.forEach((s, i) => {
-      const pctW = Math.max(4, s.pct);
+      const pctW   = Math.max(4, s.pct);
       const colors = { cyan:'var(--cyan)', green:'var(--green)', amber:'var(--amber)', pink:'#ff4488' };
       barrosWaterfall.innerHTML += `
         <div style="margin-bottom:6px">
@@ -1394,25 +1307,20 @@ function populateAnalytics() {
             <span style="font-size:9px;color:${colors[s.color]};font-weight:600">${s.val}</span>
           </div>
           <div style="height:5px;background:#0a1a2a;border-radius:3px;overflow:hidden">
-            <div style="width:${pctW}%;height:100%;background:${colors[s.color]};border-radius:3px;transition:width 1s ${i*0.1}s"></div>
+            <div style="width:${pctW}%;height:100%;background:${colors[s.color]};border-radius:3px"></div>
           </div>
           <div style="font-size:7px;color:#2a4a6a;margin-top:1px">${s.note}</div>
         </div>`;
     });
-    // Step 1 detail box
-    barrosWaterfall.innerHTML += `
-      <div style="margin:10px 0;padding:8px 12px;background:rgba(255,170,0,0.05);border:1px solid rgba(255,170,0,0.2);border-radius:4px">
-        <div style="font-size:7px;color:#aa7700;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">Step 1 · Tavg derivation (Cloonan formula: Tavg = 8×B / W×Nsub)</div>
-        <div style="font-family:var(--mono);font-size:9px;color:#c0a060;line-height:1.9">
-          580 GB/mo × 1,024 MB/GB = 593,920 MB/month<br>
-          ÷ 30 days = 19,797 MB/day<br>
-          × 12% busy-hour fraction = 2,376 MB in peak hour<br>
-          ÷ 3,600 sec/hr = 0.6599 MB/s<br>
-          × 8 bits/byte = <span style="color:var(--amber);font-weight:700">5.28 Mbps per subscribed home</span>
-        </div>
-        <div style="font-size:7px;color:#6a5020;margin-top:4px">Source: T-Mobile Q3 2025 earnings · 8M FWA subs · COO Srini Gopalan · 12% BH fraction</div>
-      </div>`;
 
+    let effTbps = 42.6 * 0.40 * 2.0 * 0.80 * 0.55;
+    let homes_iter = effTbps * 1e6 / TAVG_MBPS;
+    for (let i = 0; i < 10; i++) {
+      const groups = homes_iter / NSUBperGROUP;
+      const headroom = groups * K_CLOONAN * TMAX_MBPS;
+      homes_iter = (effTbps * 1e6 - headroom) / TAVG_MBPS;
+    }
+    const resultM = homes_iter / 1e6;
     barrosWaterfall.innerHTML += `
       <div style="margin-top:12px;padding:10px 12px;background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.15);border-radius:4px">
         <div style="display:flex;justify-content:space-between;align-items:baseline">
@@ -1426,40 +1334,48 @@ function populateAnalytics() {
       </div>`;
   }
 
+  // ── Scenarios table ──────────────────────────────────────────────────────────
   const barrosTbody = document.getElementById('barros-tbody');
   if (barrosTbody && !barrosTbody.dataset.filled) {
     barrosTbody.dataset.filled = '1';
     const scenarios = [
-      { name:'Barros original (all-V2, 5 Mbps)',    raw:67.7, tz:2.65, sp:0.175, demand:5,         barros:true,  highlight:false },
-      { name:'Barros-comparable (actual sats)',      raw:42.6, tz:2.65, sp:0.175, demand:5,         barros:true,  highlight:false },
-      { name:'Cloonan Low  (T-Mob 580GB, TZ=1.5)',  raw:42.6, tz:1.5,  sp:null,  demand:TAVG_MBPS, barros:false, highlight:false },
-      { name:'Cloonan Base (T-Mob 580GB, TZ=2.0) ★',raw:42.6, tz:2.0,  sp:null,  demand:TAVG_MBPS, barros:false, highlight:true  },
-      { name:'Cloonan High (T-Mob 580GB, TZ=2.5)',  raw:42.6, tz:2.5,  sp:null,  demand:TAVG_MBPS, barros:false, highlight:false },
+      { name:'Low  (TZ=1.5)', tz:1.5, highlight:false },
+      { name:'Base (TZ=2.0) ★', tz:2.0, highlight:true  },
+      { name:'High (TZ=2.5)', tz:2.5, highlight:false },
     ];
     scenarios.forEach(s => {
-      let globalM;
-      if (s.barros) {
-        // Barros method: raw × TZ × spatial (spatial bundles everything)
-        const eff = s.raw * s.tz * s.sp;
-        globalM = eff * 1e6 / s.demand / 1e6;
-      } else {
-        // Cloonan method: iterative with K×Tmax headroom
-        const eff = s.raw * UL * s.tz * NR * SP;
-        globalM = cloonanHomes(eff, s.demand, K_CLOONAN, TMAX_MBPS, NSUBperGROUP);
-      }
-      const usM = globalM * 0.27;
-      const hl  = s.highlight ? 'style="background:rgba(0,212,255,0.05)"' : '';
-      const demLabel = s.barros ? s.demand.toFixed(1) + ' Mbps' : s.demand.toFixed(2) + ' Mbps (T-Mob 12%BH)';
+      const eff    = 42.6 * UL * s.tz * NR * SP;
+      const globalM = cloonanHomes(eff, TAVG_MBPS, K_CLOONAN, TMAX_MBPS, NSUBperGROUP);
+      const usM    = globalM * 0.27;
+      const hl     = s.highlight ? 'style="background:rgba(0,212,255,0.05)"' : '';
       barrosTbody.innerHTML += `<tr ${hl}>
         <td style="${s.highlight ? 'color:#fff;font-weight:700' : ''}">${s.name}</td>
         <td class="amber">${s.tz}×</td>
-        <td>${demLabel}</td>
+        <td>${TAVG_MBPS.toFixed(2)} Mbps</td>
         <td class="val">${globalM.toFixed(2)}M</td>
         <td class="${s.highlight ? 'val' : 'amber'}">${usM.toFixed(2)}M</td>
       </tr>`;
     });
   }
 
+  // ── TAM bars ─────────────────────────────────────────────────────────────────
+  const tamBars = document.getElementById('tam-bars');
+  if (tamBars && !tamBars.dataset.filled) {
+    tamBars.dataset.filled = '1';
+    const segments = [
+      { name:'Rural unserved (no broadband ISP)', val:'14.5M', pct:100, color:'green' },
+      { name:'Rural underserved (<25/3 Mbps)',    val:'6.8M',  pct:47,  color:'amber' },
+      { name:'Urban backup/mobile',               val:'3.2M',  pct:22,  color:'cyan'  },
+      { name:'Maritime/Aviation',                 val:'0.8M',  pct:6,   color:'pink'  },
+    ];
+    segments.forEach(s => {
+      tamBars.innerHTML += `
+        <div class="an-bar-row">
+          <div class="an-bar-label">${s.name}</div>
+          <div class="an-bar-track"><div class="an-bar-fill ${s.color}" style="width:${s.pct}%"></div></div>
+          <div class="an-bar-val">${s.val}</div>
+        </div>`;
+    });
   }
 }
 
@@ -1473,114 +1389,160 @@ window.addEventListener('resize',()=>{
   <div style="max-width:1100px;margin:0 auto">
 
     <div class="an-section-title">
-      Starlink Capacity &amp; US Broadband Coverage
-      <span>Interactive Analysis · Data as of 2025</span>
+      Starlink Capacity Analysis
+      <span>Broadband homes model · Cloonan/ARRIS SCTE 2014 methodology · May 2026</span>
     </div>
 
     <div class="an-grid">
 
-      <!-- Capacity overview -->
+      <!-- Network Capacity by Shell -->
       <div class="an-card">
-        <div class="an-card-title">Network Capacity by Shell</div>
+        <div class="an-card-title">Network Capacity by Shell (Current Constellation)</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
           <div class="an-metric">
-            <div class="an-metric-val" id="ac-total-gbps">47.2</div>
-            <div class="an-metric-label">Total Downlink Tbps</div>
-            <div class="an-metric-sub">Active shells combined</div>
+            <div class="an-metric-val" id="ac-total-gbps">42.6</div>
+            <div class="an-metric-label">Raw Broadband Tbps (Shells 1–6)</div>
+            <div class="an-metric-sub">Excl. Shell 7 D2C</div>
           </div>
           <div class="an-metric">
             <div class="an-metric-val amber" id="ac-gbps-per-sat">7.0</div>
             <div class="an-metric-label">Gbps / Satellite (avg)</div>
-            <div class="an-metric-sub">V2 Mini: ~10 Gbps, V1: ~5 Gbps</div>
+            <div class="an-metric-sub">V1: ~5 Gbps · V2 Mini: ~10 Gbps</div>
           </div>
         </div>
-        <div id="capacity-bars">
-          <!-- filled by JS -->
-        </div>
-        <div class="an-note">* Broadband capacity = satellites rendered × Gbps/sat for Shells 1–6. Shell 7 (D2C) excluded — PCS Band 25 at ~60 MHz delivers 2–4 Mbps/beam for mobile coverage extension, not fixed broadband. Gen 2 V2 Mini carries ~2× Gen 1 capacity via wider Ku+Ka bands and optical ISL.</div>
+        <div id="capacity-bars"></div>
+        <div class="an-note">Shell 7 (D2C) excluded — PCS Band 25 ~60 MHz delivers 2–4 Mbps/beam for cellular coverage extension, not fixed broadband.</div>
       </div>
 
-      <!-- Shell detail table -->
+      <!-- Shell parameter table -->
       <div class="an-card">
-        <div class="an-card-title">Shell-by-Shell Parameters</div>
+        <div class="an-card-title">Shell Parameters</div>
         <table class="an-table">
           <thead>
-            <tr>
-              <th>Shell</th><th>Alt</th><th>Inc</th><th>Sats</th>
-              <th>Gbps/sat</th><th>Total Tbps</th><th>Latency</th>
-            </tr>
+            <tr><th>Shell</th><th>Alt</th><th>Inc</th><th>Sats</th><th>DL Band · BW</th><th>Gbps/sat</th><th>Tbps</th></tr>
           </thead>
-          <tbody id="shell-table-body">
-            <!-- filled by JS -->
-          </tbody>
+          <tbody id="shell-table-body"></tbody>
         </table>
       </div>
 
-      <!-- US broadband comparison -->
+      <!-- V3 capacity projection -->
       <div class="an-card wide">
-        <div class="an-card-title">Starlink vs US Broadband Market</div>
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:20px">
+        <div class="an-card-title">V3 Satellite Capacity Projection (2026+)</div>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-bottom:20px">
           <div class="an-metric">
-            <div class="an-metric-val">64.6M</div>
-            <div class="an-metric-label">Comcast Homes Passed</div>
-            <div class="an-metric-sub">Cable/HFC footprint</div>
+            <div class="an-metric-val">1,000</div>
+            <div class="an-metric-label">DL Gbps per V3 Sat</div>
+            <div class="an-metric-sub">1 Tbps · 10× over V2 Mini</div>
           </div>
           <div class="an-metric">
-            <div class="an-metric-val cyan">4M+</div>
-            <div class="an-metric-label">Starlink Subscribers</div>
-            <div class="an-metric-sub">~1.2M in US est.</div>
+            <div class="an-metric-val amber">200</div>
+            <div class="an-metric-label">UL Gbps per V3 Sat</div>
+            <div class="an-metric-sub">24× over V2 Mini</div>
           </div>
           <div class="an-metric">
-            <div class="an-metric-val amber">21.3M</div>
-            <div class="an-metric-label">US Unserved Homes</div>
-            <div class="an-metric-sub">No 25/3 Mbps service (FCC)</div>
+            <div class="an-metric-val cyan">60</div>
+            <div class="an-metric-label">Tbps per Starship Launch</div>
+            <div class="an-metric-sub">60 sats × 1 Tbps · 20× Falcon 9</div>
           </div>
           <div class="an-metric">
-            <div class="an-metric-val pink">14.5M</div>
-            <div class="an-metric-label">Rural Unserved</div>
-            <div class="an-metric-sub">Primary Starlink TAM</div>
+            <div class="an-metric-val">&lt;20 ms</div>
+            <div class="an-metric-label">Target Latency</div>
+            <div class="an-metric-sub">V3 design spec</div>
+          </div>
+          <div class="an-metric">
+            <div class="an-metric-val pink">H1 2026</div>
+            <div class="an-metric-label">Launch Timeline</div>
+            <div class="an-metric-sub">SpaceX 2025 end-of-year report</div>
           </div>
         </div>
         <div class="an-divider"></div>
-        <div class="an-card-title" style="margin-bottom:12px">US Broadband Provider Market Share (by homes passed)</div>
-        <div id="us-broadband-bars"></div>
+        <div class="an-card-title" style="margin-bottom:12px">V3 Homes Capacity (Cloonan model · same methodology)</div>
+        <table class="an-table" id="v3-table">
+          <thead>
+            <tr><th>V3 Sats Deployed</th><th>Raw Tbps</th><th>Eff. Tbps</th><th style="color:var(--green)">Global/US HH · Tmax=220Mbps</th><th style="color:var(--amber)">Global/US HH · Tmax=1Gbps</th><th>Phase</th></tr>
+          </thead>
+          <tbody id="v3-tbody"></tbody>
+        </table>
+        <div class="an-note" style="margin-top:10px">V3 raw = sats × 1,000 Gbps. Efficiency: ×40% UL × TZ × 80% non-res × 55% spatial. Cloonan K=1.1. Green column: Tmax=220 Mbps (same plan tier — V3 capacity serves more homes). Amber: Tmax=1 Gbps (gigabit SLA) — K×Tmax headroom jumps to 1,100 Mbps/beam vs 242 Mbps for V2, consuming most of the 10× capacity gain. Demand (Tavg=5.28 Mbps) held constant — actual V3 usage will be higher as speeds increase.</div>
       </div>
 
-      <!-- Starlink addressable market -->
-      <div class="an-card">
-        <div class="an-card-title">US Addressable Market</div>
-        <div id="tam-bars"></div>
-        <div class="an-divider"></div>
-        <div class="an-metric" style="margin-top:8px">
-          <div class="an-metric-val" id="ac-arpu">~$110</div>
-          <div class="an-metric-label">ARPU / Month (US)</div>
+      <!-- Broadband homes capacity model -->
+      <div class="an-card wide">
+        <div class="an-card-title">Broadband Homes Capacity — Cloonan/ARRIS Traffic Engineering Model</div>
+        <div class="an-note" style="margin-bottom:16px;font-size:9px;color:#5a8aaa;line-height:1.7">
+          Required capacity: <strong style="color:#c0d0e0">C ≥ (Nsub × Tavg) + (K × Tmax_max)</strong> · Cloonan/ARRIS SCTE 2014.
+          Tavg = average busy-hour bandwidth per subscribed home measured across all subscribers including idle.
+          Derived from T-Mobile FWA Q3 2025 (580 GB/month · 8M subscribers · 12% busy-hour fraction).
+          K = 1.1 (QoE headroom constant, ARRIS simulation-validated). Tmax = 220 Mbps (Starlink residential plan).
         </div>
-        <div class="an-metric">
-          <div class="an-metric-val amber">$18.6B</div>
-          <div class="an-metric-label">US TAM Annual Revenue</div>
-          <div class="an-metric-sub">14.1M rural × $110/mo × 12</div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:20px">
+          <div>
+            <div class="an-card-title" style="margin-bottom:10px">Step 1 · Tavg Derivation</div>
+            <div style="padding:10px 12px;background:rgba(255,170,0,0.05);border:1px solid rgba(255,170,0,0.2);border-radius:4px">
+              <div style="font-size:7px;color:#aa7700;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">Cloonan formula: Tavg = 8×B / (W×Nsub)</div>
+              <div style="font-family:var(--mono);font-size:9px;color:#c0a060;line-height:2.0">
+                580 GB/mo × 1,024 MB/GB = 593,920 MB/month<br>
+                ÷ 30 days = 19,797 MB/day<br>
+                × 12% busy-hour fraction = 2,376 MB/hr<br>
+                ÷ 3,600 sec/hr = 0.6599 MB/s<br>
+                × 8 bits/byte = <span style="color:var(--amber);font-weight:700">5.28 Mbps per subscribed home</span>
+              </div>
+              <div style="font-size:7px;color:#6a5020;margin-top:6px">Source: T-Mobile Q3 2025 earnings · COO Srini Gopalan · 8M FWA subscribers</div>
+            </div>
+
+            <div class="an-card-title" style="margin-bottom:10px;margin-top:16px">Capacity Chain (Base scenario)</div>
+            <div id="barros-waterfall"></div>
+          </div>
+
+          <div>
+            <div class="an-card-title" style="margin-bottom:10px">Model Assumptions</div>
+            <table class="an-table">
+              <thead><tr><th>Parameter</th><th>Value</th><th>Basis</th></tr></thead>
+              <tbody>
+                <tr><td>Monthly usage (Tavg source)</td><td class="val">580 GB/mo</td><td>T-Mobile FWA Q3 2025 earnings</td></tr>
+                <tr><td>Busy-hour fraction</td><td class="val">12%</td><td>IEEE 802.3 / Ericsson methodology</td></tr>
+                <tr><td>Tavg per subscribed home</td><td class="val">5.28 Mbps</td><td>Derived via Cloonan formula</td></tr>
+                <tr><td>K (QoE headroom constant)</td><td class="val">1.1</td><td>Cloonan/ARRIS SCTE 2014 simulations</td></tr>
+                <tr><td>Tmax (plan speed)</td><td class="val">220 Mbps</td><td>Starlink residential advertised speed</td></tr>
+                <tr><td>User-link DL fraction</td><td class="val">40%</td><td>~60% feeder/gateway/uplink overhead</td></tr>
+                <tr><td>Time-zone reuse</td><td class="val">1.5–2.5×</td><td>Low/Base/High scenarios</td></tr>
+                <tr><td>Non-residential discount</td><td class="val">80%</td><td>~20% commercial/maritime/aviation</td></tr>
+                <tr><td>Spatial efficiency</td><td class="val">55%</td><td>Pop distribution vs beam geometry</td></tr>
+                <tr><td>Service group size</td><td class="val">300 HH</td><td>Rural satellite beam coverage estimate</td></tr>
+                <tr><td>US share of global subs</td><td class="val">27%</td><td>Starlink 2025 subscriber split</td></tr>
+              </tbody>
+            </table>
+
+            <div class="an-card-title" style="margin-bottom:10px;margin-top:16px">Scenario Results</div>
+            <table class="an-table">
+              <thead><tr><th>Scenario</th><th>TZ Reuse</th><th>Tavg</th><th>Global HH</th><th>US HH</th></tr></thead>
+              <tbody id="barros-tbody"></tbody>
+            </table>
+            <div class="an-note" style="margin-top:8px">K×Tmax term reduces homes by ~10–15% vs Nsub×Tavg alone. Cloonan base = ~2.5M global / ~0.67M US.</div>
+          </div>
         </div>
-        <div class="an-note">TAM assumes 100% rural unserved penetration at current ARPU. Actual penetration est. 8-12% by 2030.</div>
       </div>
 
-      <!-- Latency & performance -->
-      <div class="an-card">
-        <div class="an-card-title">Performance vs Cable / Fiber</div>
+      <!-- Performance comparison -->
+      <div class="an-card wide">
+        <div class="an-card-title">Performance vs Other Broadband Technologies</div>
         <table class="an-table">
           <thead>
             <tr><th>Technology</th><th>Latency</th><th>Downlink</th><th>Uplink</th><th>Coverage</th></tr>
           </thead>
           <tbody>
-            <tr><td>Fiber (GPON)</td><td style="color:#00ff88;font-weight:600">2–5 ms ●</td><td class="val">500–2000 Mbps</td><td class="val">500–2000 Mbps</td><td>Urban</td></tr>
-            <tr><td>Cable (DOCSIS 3.1)</td><td style="color:#44dd88;font-weight:600">8–20 ms ●</td><td class="val">200–1000 Mbps</td><td>10–35 Mbps</td><td>Urban/Sub</td></tr>
-            <tr><td>Starlink Gen 2</td><td style="color:#ffaa00;font-weight:600">18–35 ms ●</td><td class="val">100–250 Mbps</td><td>10–20 Mbps</td><td>Global</td></tr>
+            <tr><td>Fiber (GPON)</td><td style="color:#00ff88;font-weight:600">2–5 ms ●</td><td class="val">500–2,000 Mbps</td><td class="val">500–2,000 Mbps</td><td>Urban</td></tr>
+            <tr><td>Cable (DOCSIS 3.1)</td><td style="color:#44dd88;font-weight:600">8–20 ms ●</td><td class="val">200–1,000 Mbps</td><td>10–35 Mbps</td><td>Urban/Sub</td></tr>
+            <tr><td>Starlink V3 (projected)</td><td style="color:#88dd44;font-weight:600">&lt;20 ms ●</td><td class="val">500–1,000 Mbps</td><td>100–200 Mbps</td><td>Global</td></tr>
+            <tr><td>Starlink V2 (current)</td><td style="color:#ffaa00;font-weight:600">18–35 ms ●</td><td class="val">100–250 Mbps</td><td>10–20 Mbps</td><td>Global</td></tr>
             <tr><td>DSL/Fixed Wireless</td><td style="color:#ff8800;font-weight:600">15–40 ms ●</td><td>5–50 Mbps</td><td>1–10 Mbps</td><td>Rural</td></tr>
-            <tr><td>Starlink Gen 1</td><td style="color:#ff6600;font-weight:600">25–50 ms ●</td><td class="val">50–200 Mbps</td><td>10–20 Mbps</td><td>Global</td></tr>
+            <tr><td>Starlink V1 (legacy)</td><td style="color:#ff6600;font-weight:600">25–50 ms ●</td><td class="val">50–200 Mbps</td><td>10–20 Mbps</td><td>Global</td></tr>
             <tr><td>Geostationary (GEO)</td><td style="color:#ff2222;font-weight:600">600–800 ms ●</td><td>15–100 Mbps</td><td>3–10 Mbps</td><td>Global</td></tr>
           </tbody>
         </table>
-      <div class="an-note" style="display:flex;align-items:center;gap:12px;margin-top:8px">
-          <span style="color:#3a5a7a;letter-spacing:1px;font-size:7px;text-transform:uppercase">Latency scale:</span>
+        <div class="an-note" style="display:flex;align-items:center;gap:12px;margin-top:8px">
+          <span style="color:#3a5a7a;letter-spacing:1px;font-size:7px;text-transform:uppercase">Latency:</span>
           <span style="color:#00ff88">● &lt;10 ms Excellent</span>
           <span style="color:#ffaa00">● 10–50 ms Good</span>
           <span style="color:#ff6600">● 50–100 ms Fair</span>
@@ -1588,129 +1550,33 @@ window.addEventListener('resize',()=>{
         </div>
       </div>
 
-      <!-- Barros Capacity Model -->
-      <div class="an-card wide">
-        <div class="an-card-title">Broadband Homes Capacity — Barros Model (Reconstructed)</div>
-        <div class="an-note" style="margin-bottom:16px;font-size:9px;color:#5a8aaa;line-height:1.7">
-          Barros (May 2026) estimated Starlink's global quality-protected residential broadband ceiling.
-          Model applies 7 steps: raw satellite capacity → user-link DL → time-zone reuse → spatial efficiency → busy-hour demand per home.
-          Our critical review corrects for actual (not all-V2) constellation, updated 2026 demand, and explicit non-residential reservation.
-          Shell 7 D2C excluded throughout.
-        </div>
-
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:20px">
-
-          <!-- Step waterfall -->
-          <div>
-            <div class="an-card-title" style="margin-bottom:10px">Model Steps (Base 2026 Scenario)</div>
-            <div id="barros-waterfall"></div>
-          </div>
-
-          <!-- Scenario comparison -->
-          <div>
-            <div class="an-card-title" style="margin-bottom:10px">Scenario Comparison</div>
-            <table class="an-table" id="barros-table">
-              <thead>
-                <tr>
-                  <th>Scenario</th><th>TZ Reuse</th><th>Demand</th>
-                  <th>Global HH</th><th>US HH</th>
-                </tr>
-              </thead>
-              <tbody id="barros-tbody"></tbody>
-            </table>
-            <div class="an-note" style="margin-top:10px">
-              US share ~27% of global (Starlink 2025 subscriber split).
-              Barros used all-V2 specs (67.7 Tbps) vs. actual mixed Gen1/Gen2 constellation (42.6 Tbps).
-              Cloonan Base = ~2.5M global / ~0.67M US · T-Mobile FWA 580 GB/mo · 12% BH · K=1.1 · Tmax=220 Mbps.
-              Barros omits the K×Tmax term (AC headroom) — understating required capacity by ~10–15%.
-            </div>
-          </div>
-        </div>
-
-        <!-- Key assumptions -->
+      <!-- US addressable market -->
+      <div class="an-card">
+        <div class="an-card-title">US Addressable Market</div>
+        <div id="tam-bars"></div>
         <div class="an-divider"></div>
-        <div class="an-card-title" style="margin-bottom:10px">Key Assumptions &amp; Barros Critiques</div>
-        <table class="an-table">
-          <thead>
-            <tr><th>Step</th><th>Barros Assumption</th><th>Our Correction</th><th>Impact</th></tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Raw capacity</td>
-              <td class="amber">67.7 Tbps (all 6,765 sats at V2 10 Gbps)</td>
-              <td class="val">42.6 Tbps (actual Gen1/Gen2 mix)</td>
-              <td style="color:#ff6600">−37% raw capacity</td>
-            </tr>
-            <tr>
-              <td>Time-zone reuse</td>
-              <td class="amber">2.65× (aggressive — assumes dense global demand)</td>
-              <td class="val">1.5–2.5× (Low/Base/High)</td>
-              <td style="color:#ff6600">Base −25% vs Barros</td>
-            </tr>
-            <tr>
-              <td>Spatial efficiency</td>
-              <td class="amber">17.5% (bundles UL fraction + non-res + mismatch)</td>
-              <td class="val">Explicit: UL 40% × non-res 80% × spatial 55%</td>
-              <td style="color:#ffaa00">Similar combined factor (~17.6%)</td>
-            </tr>
-            <tr>
-              <td>Busy-hour demand (Tavg)</td>
-              <td style="color:#ff4444">5 Mbps/HH (implied ~220 GB/mo, 2019-era)</td>
-              <td class="val">5.28 Mbps/HH · T-Mobile FWA Q3 2025 · 580 GB/mo · 12% BH</td>
-              <td style="color:#ffaa00">Similar magnitude — but Barros omits K×Tmax term</td>
-            </tr>
-            <tr>
-              <td>K×Tmax headroom term</td>
-              <td style="color:#ff4444">Omitted entirely (Barros uses Nsub×Tavg only)</td>
-              <td class="val">K=1.1 × 220 Mbps = 242 Mbps per service group</td>
-              <td style="color:#ff4444">Reduces homes by ~10–15% vs Nsub×Tavg alone</td>
-            </tr>
-            <tr>
-              <td>Peak utilization</td>
-              <td class="amber">27% HH online simultaneously at busy hour</td>
-              <td class="val">25% (consistent with Barros, marginally lower)</td>
-              <td style="color:#7aaabb">Minimal impact</td>
-            </tr>
-            <tr>
-              <td>Shell 7 D2C</td>
-              <td class="amber">Unclear — likely included in Barros raw</td>
-              <td class="val">Explicitly excluded — not fixed broadband</td>
-              <td style="color:#7aaabb">~10% raw capacity excluded</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="an-metric" style="margin-top:8px">
+          <div class="an-metric-val">~$110</div>
+          <div class="an-metric-label">ARPU / Month (US Residential)</div>
+        </div>
+        <div class="an-metric">
+          <div class="an-metric-val amber">$18.6B</div>
+          <div class="an-metric-label">US Rural TAM (Annual Revenue)</div>
+          <div class="an-metric-sub">14.1M rural unserved × $110/mo × 12</div>
+        </div>
+        <div class="an-note">FCC 2024: 21.3M US homes unserved (&lt;25/3 Mbps). 14.5M rural. TAM assumes 100% penetration at current ARPU.</div>
       </div>
 
-      <!-- D2C & NTN -->
-      <div class="an-card wide">
-        <div class="an-card-title">Direct-to-Cell (Shell 7) — NTN Impact on US Wireless</div>
-        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:16px">
-          <div class="an-metric">
-            <div class="an-metric-val cyan">784</div>
-            <div class="an-metric-label">D2C Satellites (Shell 7)</div>
-            <div class="an-metric-sub">525 km · 43° inc</div>
-          </div>
-          <div class="an-metric">
-            <div class="an-metric-val">PCS/B25</div>
-            <div class="an-metric-label">Frequency Band</div>
-            <div class="an-metric-sub">1900 MHz licensed</div>
-          </div>
-          <div class="an-metric">
-            <div class="an-metric-val amber">~2–4 Mbps</div>
-            <div class="an-metric-label">D2C Throughput/Beam</div>
-            <div class="an-metric-sub">SMS + data capable</div>
-          </div>
-          <div class="an-metric">
-            <div class="an-metric-val pink">T-Mobile</div>
-            <div class="an-metric-label">US Carrier Partner</div>
-            <div class="an-metric-sub">Coverage in dead zones</div>
-          </div>
-          <div class="an-metric">
-            <div class="an-metric-val">500M+</div>
-            <div class="an-metric-label">Compatible Devices</div>
-            <div class="an-metric-sub">Standard LTE/5G phones</div>
-          </div>
+      <!-- Direct-to-Cell -->
+      <div class="an-card">
+        <div class="an-card-title">Shell 7 · Direct-to-Cell (D2C)</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="an-metric"><div class="an-metric-val cyan">784</div><div class="an-metric-label">D2C Satellites</div><div class="an-metric-sub">525 km · 43° inc</div></div>
+          <div class="an-metric"><div class="an-metric-val">PCS/B25</div><div class="an-metric-label">Frequency</div><div class="an-metric-sub">1900 MHz licensed</div></div>
+          <div class="an-metric"><div class="an-metric-val amber">2–4 Mbps</div><div class="an-metric-label">Throughput/Beam</div><div class="an-metric-sub">SMS + basic data</div></div>
+          <div class="an-metric"><div class="an-metric-val">500M+</div><div class="an-metric-label">Compatible Devices</div><div class="an-metric-sub">Standard LTE/5G</div></div>
         </div>
+        <div class="an-note" style="margin-top:12px">D2C is a wireless coverage extension service — not fixed broadband. Excluded from all capacity and homes calculations above.</div>
       </div>
 
     </div><!-- /an-grid -->
