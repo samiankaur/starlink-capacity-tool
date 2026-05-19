@@ -1096,7 +1096,7 @@ const SHELL_GBPS = [5.0, 5.0, 4.5, 5.0, 10.0, 10.0, 7.0]; // Gbps per satellite
 function populateAnalytics() {
   // ── Constants ─────────────────────────────────────────────────────────────────
   const TAVG_MBPS    = 1.35;   // Barros demand: 5 Mbps/active home × 27% inter-HH concurrency = 1.35 Mbps/subscribed home
-  const TAVG_MBPS_B  = 4.00;   // Scenario B: 4 Mbps/sub — gigabit urban, higher usage, ~80% concurrency × ~5 Mbps avg
+  const TAVG_MBPS_B  = 10.00;  // Scenario B: 10 Mbps/sub — gigabit urban users (4K×30%duty=7.5 + cloud/multi-device=2.5 Mbps)
   const K_CLOONAN    = 1.1;    // Cloonan/ARRIS SCTE 2014 QoE constant
   const TMAX_MBPS    = 220;    // Starlink residential Tmax (Mbps)
   const NSUBperGROUP = 300;    // Rural satellite beam service group size
@@ -1114,12 +1114,14 @@ function populateAnalytics() {
   ];
 
   function cloonanHomes(effTbps, tavg, K, tmax, nsub_group) {
+    // Stability check: K×Tmax must be < 70% of Nsub×Tavg, else model oscillates
+    if ((K * tmax) / (nsub_group * tavg) > 0.70) return null;
     let h = effTbps * 1e6 / tavg;
     for (let i = 0; i < 10; i++) {
       const groups = h / nsub_group;
       h = (effTbps * 1e6 - groups * K * tmax) / tavg;
     }
-    return h / 1e6;
+    return (h < 0) ? null : h / 1e6;
   }
 
   // ── Capacity bars ─────────────────────────────────────────────────────────────
@@ -1203,8 +1205,10 @@ function populateAnalytics() {
     v3_scenarios.forEach(s => {
       const rawTbps = s.sats * V3_GBPS / 1000;
       const effTbps = rawTbps * UL * s.tz * NR * SP;
-      const gA = cloonanHomes(effTbps, TAVG_MBPS, K_CLOONAN, 220,     NSUBperGROUP);
-      const gB = cloonanHomes(effTbps, TAVG_MBPS, K_CLOONAN, V3_TMAX, NSUBperGROUP);
+      const gA   = cloonanHomes(effTbps, TAVG_MBPS,   K_CLOONAN, 220,      NSUBperGROUP);
+      const gB   = cloonanHomes(effTbps, TAVG_MBPS_B, K_CLOONAN, V3_TMAX,  NSUBperGROUP);
+      const gBstr = gB !== null ? gB.toFixed(1)+'M' : 'N/A';
+      const usBstr = gB !== null ? (gB*US_SHARE_B).toFixed(1)+'M' : '—';
       v3tbodyA.innerHTML += `<tr>
         <td>${s.sats.toLocaleString()} V3 · ${s.label}</td>
         <td class="val">${effTbps.toFixed(1)} Tbps</td>
@@ -1213,8 +1217,8 @@ function populateAnalytics() {
       v3tbodyB.innerHTML += `<tr>
         <td>${s.sats.toLocaleString()} V3 · ${s.label}</td>
         <td class="val">${effTbps.toFixed(1)} Tbps</td>
-        <td class="amber">${gB.toFixed(1)}M</td>
-        <td class="amber">${(gB*US_SHARE_B).toFixed(1)}M</td></tr>`;
+        <td class="amber">${gBstr}</td>
+        <td class="amber">${usBstr}</td></tr>`;
     });
   }
 
@@ -1272,8 +1276,8 @@ function populateAnalytics() {
       const globalA = cloonanHomes(eff, TAVG_MBPS, K_CLOONAN, 220,      NSUBperGROUP);
       const usA     = globalA * 0.32;
       // Scenario B: Tmax=1000 Mbps (gigabit plans), US share 22% (urban TAM)
-      const globalB = cloonanHomes(eff, TAVG_MBPS_B, K_CLOONAN, V3_TMAX,  NSUBperGROUP);
-      const usB     = globalB * 0.22;
+      const globalB = cloonanHomes(eff, TAVG_MBPS_B, K_CLOONAN, V3_TMAX, NSUBperGROUP);
+      const usB     = globalB !== null ? globalB * 0.22 : null;
       const hlA = s.highlight ? 'style="background:rgba(0,255,136,0.05)"' : '';
       const hlB = s.highlight ? 'style="background:rgba(255,170,0,0.05)"' : '';
       barrosTbodyA.innerHTML += `<tr ${hlA}>
@@ -1290,7 +1294,7 @@ function populateAnalytics() {
       barrosTbodyB.innerHTML += `<tr ${hlB}>
         <td style="${s.highlight ? 'color:#fff;font-weight:700' : ''}">${s.name}</td>
         <td class="amber">${s.tz}×</td>
-        <td>${TAVG_MBPS_B.toFixed(2)} Mbps</td>
+        <td>${TAVG_MBPS_B.toFixed(0)} Mbps</td>
         <td class="amber">${bValid ? globalB.toFixed(2)+'M' : '<span style="color:#3a5a7a">N/A †</span>'}</td>
         <td class="${s.highlight ? 'amber' : ''}">${bValid ? usB.toFixed(2)+'M' : '—'}</td>
       </tr>`;
@@ -1550,7 +1554,7 @@ window.addEventListener('resize',()=>{
             <!-- Scenario B box -->
             <div style="padding:10px 14px;background:rgba(255,170,0,0.05);border:1px solid rgba(255,170,0,0.18);border-radius:4px;margin-bottom:10px">
               <div style="font-size:7px;color:var(--amber);letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">
-                Scenario B — Gigabit plans (Tmax=1,000 Mbps · Tavg=4 Mbps) · US share 22% (urban TAM)
+                Scenario B — Gigabit plans (Tmax=1,000 Mbps · Tavg=10 Mbps) · US share 22% (urban TAM)
               </div>
               <table class="an-table">
                 <thead><tr><th>Scenario</th><th>TZ Reuse</th><th>Tavg</th><th>Global HH</th><th>US HH (22%)</th></tr></thead>
@@ -1558,7 +1562,7 @@ window.addEventListener('resize',()=>{
               </table>
             </div>
 
-            <div class="an-note">K×Tmax: Sc.A = 242 Mbps/beam · Sc.B = 1,100 Mbps/beam (4.5× larger). US shares: rural TAM (A=32%) vs urban-global (B=22%). Scenario B uses Tavg=4 Mbps (higher usage for gigabit urban subscribers: ~80% concurrency × ~5 Mbps active-home avg). Scenario A uses Tavg=1.35 Mbps (Barros: 5 Mbps/active × 27% concurrency).</div>
+            <div class="an-note">K×Tmax: Sc.A = 242 Mbps/beam · Sc.B = 1,100 Mbps/beam (4.5× larger). US shares: rural TAM (A=32%) vs urban-global (B=22%). Scenario B uses Tavg=10 Mbps (gigabit urban: 4K streaming 30% duty×25Mbps=7.5 + cloud/multi-device=2.5 Mbps; K×Tmax/Nsub×Tavg=0.37 ✓ stable). Scenario A uses Tavg=1.35 Mbps (Barros: 5 Mbps/active × 27% concurrency).</div>
 
             <!-- V3 additive impact -->
             <div style="margin-top:12px;padding:10px 14px;background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.15);border-radius:4px">
