@@ -690,7 +690,7 @@ const atmMat = new THREE.MeshPhongMaterial({color:0x0044aa,transparent:true,opac
 scene.add(new THREE.Mesh(new THREE.SphereGeometry(EARTH_R*1.018,48,48), atmMat));
 
 // ── Satellites ────────────────────────────────────────────────────────────────
-let shellGroups=[], shellVisible=SHELLS.map(()=>true), orbitLines=[];
+let shellGroups=[], shellVisible=[false,false,false,false,true,true,false], orbitLines=[];
 let simSpeed=8, satSize=1, showOrbits=true, showCoverage=false, autoRotate=false;
 
 function orbitalPos(R,inc,RAAN,anomaly){
@@ -898,6 +898,9 @@ SHELLS.forEach((shell,i)=>{
     updateCoverageStats();
   });
   row.addEventListener('mouseenter',()=>updateOrbitalParams(i));
+  // Apply initial visibility state
+  shellGroups[i].group.visible = shellVisible[i];
+  row.style.opacity = shellVisible[i] ? '1' : '0.35';
   shellList.appendChild(row);
 });
 
@@ -1017,6 +1020,12 @@ function setupDrawer(drawerId,tabId){
 }
 setupDrawer('left-drawer','left-tab');
 setupDrawer('right-drawer','right-tab');
+
+// Open left drawer to shells panel by default
+(function(){
+  const shellsIcon = document.querySelector('#left-tab .tab-icon[data-panel="shells"]');
+  if(shellsIcon) shellsIcon.click();
+})();
 
 // ── Animate ────────────────────────────────────────────────────────────────────
 let t=0;
