@@ -548,7 +548,7 @@ container.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.01, 200);
 camera.position.set(0,4,16);
-scene.add(new THREE.AmbientLight(0x223344,0.6));
+scene.add(new THREE.AmbientLight(0x334455,1.4));
 const sunLight = new THREE.DirectionalLight(0xfff5e0,1.2);
 sunLight.position.set(20,8,10); scene.add(sunLight);
 
@@ -684,6 +684,7 @@ ctx.restore();
 const earthTex = new THREE.CanvasTexture(texCanvas);
 const earthMat = new THREE.MeshPhongMaterial({map:earthTex,emissive:new THREE.Color(0x010508),emissiveIntensity:0.12,shininess:15,specular:new THREE.Color(0x0a1a2a)});
 const earth = new THREE.Mesh(new THREE.SphereGeometry(EARTH_R,64,64), earthMat);
+earth.rotation.y = -1.745; // Orient so Asia faces camera at startup
 scene.add(earth);
 const atmMat = new THREE.MeshPhongMaterial({color:0x0044aa,transparent:true,opacity:0.12,side:THREE.FrontSide});
 scene.add(new THREE.Mesh(new THREE.SphereGeometry(EARTH_R*1.018,48,48), atmMat));
